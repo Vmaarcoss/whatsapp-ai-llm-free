@@ -1,0 +1,41 @@
+{
+  "name": "whatsapp-ai-boilerplate",
+  "version": "1.0.0",
+  "description": "Boilerplate reutilizável de atendimento por WhatsApp com Claude AI — arquitetura em camadas, troca de cliente só via config",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "whatsapp",
+    "baileys",
+    "claude",
+    "anthropic",
+    "chatbot",
+    "boilerplate"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "6.7.18",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "openai": "^7.3.0",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.10",
+    "@types/qrcode-terminal": "^0.12.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

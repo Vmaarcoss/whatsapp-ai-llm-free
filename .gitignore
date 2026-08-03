@@ -1,0 +1,14 @@
+# Dependências
+node_modules/
+
+# Dados sensíveis e sessões
+data/
+.env
+.env.example
+
+# Build
+dist/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
