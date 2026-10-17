@@ -1,10 +1,12 @@
-# WhatsApp AI Boilerplate (groq ia ghratuta)
+# A ideia desse projeto é de forma gratuita fazer uma pequena demonstração de um MVP B2B para responder clientes automaticamente, (não recomendo uso comercial) usei webhook para fazer a interação ao vivo entre menssagem e LLM 
+
+# WhatsApp AI Boilerplate (groq ia gratis)
 
 | Camada | Interface | Implementações MVP | Troca via |
 |--------|-----------|--------------------|-----------|
 | WhatsApp | `WhatsAppProvider` | Baileys (pairing + QR) | `PROVIDER=baileys\|meta` |
 | Persistência | `ConversationStore` | JSON file (`./data/store.json`) | `STORE=sqlite\|postgres` |
-| IA | — | Claude (`@anthropic-ai/sdk`) | `MODEL=...` |
+| IA | — | groq  | `MODEL=...` |
 | Negócio | — | `businessConfig` | editar `config/business.ts` |
 
 > O nome da env `STORE=sqlite` permanece por compatibilidade. A implementação MVP é um arquivo JSON puro (zero dependência nativa). Substitua por `better-sqlite3` real quando precisar de performance.
@@ -14,9 +16,8 @@
 ## Pré-requisitos
 
 - Node.js ≥ 20
-- Conta Anthropic (chave API)
+- Conta groq https://console.groq.com/home (chave API)
 - (Baileys) Número de WhatsApp para parear
-- (Meta) App no Meta for Developers + número Cloud API (opcional)
 
 ---
 
