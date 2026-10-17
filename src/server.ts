@@ -44,7 +44,7 @@ export function createServer(provider: WhatsAppProvider) {
     }
   });
 
-  // --- Meta webhook incoming (POST) ---
+  //Meta webhook metood (POST)
   app.post("/webhook", async (req: Request, res: Response) => {
     // Valida assinatura se APP_SECRET estiver configurado
     const appSecret = process.env.META_APP_SECRET;
@@ -67,10 +67,10 @@ export function createServer(provider: WhatsAppProvider) {
       }
     }
 
-    // Responde 200 rápido (Meta exige)
+    // Responde 200 rpido
     res.sendStatus(200);
 
-    // Processa se for MetaProvider
+    // Processa boleano se  MetaProvider falhar
     if (provider instanceof MetaProvider) {
       try {
         await provider.handleWebhookPayload(req.body);

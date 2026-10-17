@@ -1,28 +1,4 @@
-# WhatsApp AI Boilerplate (Claude)
-
-Boilerplate reutilizável de atendimento por WhatsApp com IA (Claude).  
-Arquitetura em camadas atrás de interfaces: troque provider, store ou cliente sem reescrever o núcleo.
-
-**Trocar de cliente = editar só `src/config/business.ts`.**
-
----
-
-## Arquitetura
-
-```
-src/
-├── providers/          # WhatsApp (interface + Baileys MVP + Meta stub)
-├── store/              # Conversas + mini-CRM (interface + JSON file MVP + Postgres stub)
-├── core/
-│   ├── types.ts        # Message interna
-│   ├── normalizer.ts   # payload provider → Message
-│   ├── engine.ts       # Claude (tools, thinking adaptive)
-│   └── router.ts       # auto-resposta vs handoff
-├── config/
-│   └── business.ts     # ⭐ persona, FAQ, regras, tools — muda por cliente
-├── server.ts           # HTTP: /health + /webhook (Meta)
-└── index.ts            # bootstrap
-```
+# WhatsApp AI Boilerplate (groq ia ghratuta)
 
 | Camada | Interface | Implementações MVP | Troca via |
 |--------|-----------|--------------------|-----------|
@@ -52,9 +28,7 @@ npm install
 
 # 2. Configurar env
 cp .env.example .env
-# Edite .env:
-#   ANTHROPIC_API_KEY=sk-ant-...
-#   BAILEYS_PHONE=5511999998888   # só dígitos, com DDI
+# Edite .env com seu numero e sua chave api groq
 
 # 3. Rodar em dev (tsx, sem build)
 npm run dev
@@ -64,7 +38,7 @@ npm run dev
 
 1. Ao subir, se `BAILEYS_PHONE` estiver preenchido e não houver sessão em `data/baileys-auth`, o terminal mostra um **pairing code de 8 dígitos**.
 2. No celular: **WhatsApp → Aparelhos conectados → Conectar um aparelho → Conectar com número de telefone** → digite o código.
-3. Alternativa: se aparecer QR no terminal, escaneie normalmente.
+3. Alternativa: se aparecer QR no terminal, escaneie normalmente. mais faci;l
 4. Sessão fica em `data/baileys-auth` — **não precisa logar de novo** após restart.
 
 Para forçar novo pareamento:
@@ -76,7 +50,7 @@ npm run dev
 
 ---
 
-## Meta Cloud API (webhook)
+## Meta Cloud API caso queira ( nao testado) (webhook)
 
 1. No `.env`:
    ```

@@ -1,26 +1,32 @@
 /**
  * Camada de IA — Groq (OpenAI-compatible) com function calling.
- * Substitui o motor Anthropic por um modelo gratuito da Groq.
- *
- * Mantém a mesma interface EngineResult para não quebrar o Router.
+ * Tools: escalar_para_humano | registrar_lead | agendar_consulta
+ * Mini-CRM: CSV + notificação ao dono (via callback).
  */
 
 import OpenAI from "openai";
 import type { Message } from "./types.js";
-import type { ConversationStore } from "../store/index.js"; // <-- import via barrel
+import type { ConversationStore } from "../store/ConversationStore.js";
 import { businessConfig } from "../config/business.js";
+import {
+  saveLeadToCsv,
+  saveAgendamentoToCsv,
+  type NotifyOwnerFn,
+} from "./crm.js";
 
 const MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
 
 export interface EngineResult {
-  /** Texto final para enviar ao usuário (null se handoff) */
   replyText: string | null;
-  /** true se a tool escalar_para_humano foi chamada */
   handoff: boolean;
   handoffMotivo?: string;
 }
 
-/** Definição das tools no formato OpenAI function calling */
+export interface EngineOptions {
+  /** Envia WhatsApp para o dono (wiring no Router/index) */
+  notifyOwner?: NotifyOwnerFn;
+}
+
 const ALL_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
@@ -57,6 +63,35 @@ const ALL_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "agendar_consulta",
+      description:
+        "Agenda uma consulta/serviço quando o cliente informar nome, telefone, serviço e data/horário desejados.",
+      parameters: {
+        type: "object",
+        properties: {
+          nome: { type: "string", description: "Nome do cliente" },
+          telefone: { type: "string", description: "Telefone com DDD" },
+          servico: {
+            type: "string",
+            description: "Tipo de serviço (ex.: visita técnica, instalação)",
+          },
+          dataHora: {
+            type: "string",
+            description:
+              "Data e horário desejados (ex.: quinta 15h, 07/08/2026 14:00)",
+          },
+          observacao: {
+            type: "string",
+            description: "Observação opcional do cliente",
+          },
+        },
+        required: ["nome", "telefone", "servico", "dataHora"],
+      },
+    },
+  },
 ];
 
 function buildSystemPrompt(): string {
@@ -83,15 +118,13 @@ ${regras}
 Instruções gerais:
 - Responda em português brasileiro, de forma clara e curta (WhatsApp).
 - Não invente dados que não estejam no FAQ.
-- Se precisar de dados do cliente (nome, telefone, interesse), pergunte educadamente e use registrar_lead quando tiver os três campos.
+- Se o cliente quiser só informação de interesse (sem agendar), colete nome + telefone + interesse e use registrar_lead.
+- Se o cliente quiser marcar horário, colete nome + telefone + serviço + data/horário e use agendar_consulta.
 - Quando escalar, chame a tool; não invente que já transferiu.
+- Confirme os dados antes de chamar a tool de agendamento, se estiver incompleto.
 `;
 }
 
-/**
- * Converte histórico interno (Message[]) para o formato de mensagens da OpenAI.
- * Inclui suporte a tool_calls e tool results salvos anteriormente.
- */
 function toOpenAIMessages(
   history: Message[]
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
@@ -104,18 +137,19 @@ function toOpenAIMessages(
       result.push({ role: "user", content: m.text });
     } else if (m.role === "assistant") {
       if (m.toolUseId && m.toolName && m.toolInput) {
-        const toolCallBlock = {
-          id: m.toolUseId,
-          type: "function" as const,
-          function: {
-            name: m.toolName,
-            arguments: JSON.stringify(m.toolInput),
-          },
-        };
         result.push({
           role: "assistant",
           content: m.text || null,
-          tool_calls: [toolCallBlock],
+          tool_calls: [
+            {
+              id: m.toolUseId,
+              type: "function",
+              function: {
+                name: m.toolName,
+                arguments: JSON.stringify(m.toolInput),
+              },
+            },
+          ],
         });
       } else {
         result.push({ role: "assistant", content: m.text });
@@ -135,8 +169,9 @@ function toOpenAIMessages(
 export class Engine {
   private client: OpenAI;
   private store: ConversationStore;
+  private notifyOwner?: NotifyOwnerFn;
 
-  constructor(store: ConversationStore) {
+  constructor(store: ConversationStore, options: EngineOptions = {}) {
     if (!process.env.GROQ_API_KEY) {
       throw new Error(
         "GROQ_API_KEY não definida. Configure no .env antes de iniciar."
@@ -147,19 +182,20 @@ export class Engine {
       baseURL: "https://api.groq.com/openai/v1",
     });
     this.store = store;
+    this.notifyOwner = options.notifyOwner;
   }
 
   async process(chatId: string, userMessage: Message): Promise<EngineResult> {
-    // Persiste a mensagem do usuário
     await this.store.append(chatId, userMessage);
 
     const history = await this.store.getHistory(chatId, 40);
     let messages = toOpenAIMessages(history);
 
-    // Filtra tools habilitadas no config (type guard para evitar erro de tipo)
     const enabledTools = ALL_TOOLS.filter((t) => {
       if (t.type === "function") {
-        return businessConfig.toolsHabilitadas.includes(t.function.name as any);
+        return businessConfig.toolsHabilitadas.includes(
+          t.function.name as (typeof businessConfig.toolsHabilitadas)[number]
+        );
       }
       return false;
     });
@@ -184,18 +220,16 @@ export class Engine {
       });
 
       const choice = response.choices[0];
-      const finishReason = choice.finish_reason;
+      if (!choice) break;
 
-      if (finishReason === "tool_calls") {
+      if (choice.finish_reason === "tool_calls") {
         const assistantMsg = choice.message;
         const toolCalls = assistantMsg.tool_calls ?? [];
         const assistantText = assistantMsg.content ?? "";
 
-        // Type guard: só processa chamadas do tipo "function"
         const functionCalls = toolCalls.filter(
-          (
-            tc
-          ): tc is OpenAI.Chat.Completions.ChatCompletionMessageToolCall & {
+          (tc): tc is OpenAI.Chat.Completions.ChatCompletionMessageToolCall & {
+            type: "function";
             function: { name: string; arguments: string };
           } => tc.type === "function"
         );
@@ -230,24 +264,9 @@ export class Engine {
               motivo: handoffMotivo,
             });
           } else if (tc.function.name === "registrar_lead") {
-            try {
-              const lead = await this.store.saveLead({
-                chatId,
-                nome: String(input.nome ?? ""),
-                telefone: String(input.telefone ?? ""),
-                interesse: String(input.interesse ?? ""),
-              });
-              resultContent = JSON.stringify({
-                status: "lead_registrado",
-                id: lead.id,
-              });
-              console.log(`[CRM] Lead salvo: ${lead.nome} (${lead.telefone})`);
-            } catch (err) {
-              resultContent = JSON.stringify({
-                status: "erro",
-                message: String(err),
-              });
-            }
+            resultContent = await this.handleRegistrarLead(chatId, input);
+          } else if (tc.function.name === "agendar_consulta") {
+            resultContent = await this.handleAgendarConsulta(chatId, input);
           } else {
             resultContent = JSON.stringify({
               status: "tool_desconhecida",
@@ -255,7 +274,6 @@ export class Engine {
             });
           }
 
-          // Salva tool result
           await this.store.append(chatId, {
             role: "tool",
             text: resultContent,
@@ -277,11 +295,9 @@ export class Engine {
           break;
         }
 
-        // Continua o loop: mensagem do assistente + resultados das tools
         messages.push(assistantMsg);
         messages.push(...toolResultsForNextTurn);
       } else {
-        // Resposta final (texto)
         finalText = choice.message.content ?? null;
         if (finalText) {
           await this.store.append(chatId, {
@@ -294,10 +310,98 @@ export class Engine {
       }
     }
 
-    return {
-      replyText: finalText,
-      handoff,
-      handoffMotivo,
-    };
+    return { replyText: finalText, handoff, handoffMotivo };
+  }
+
+  private async handleRegistrarLead(
+    chatId: string,
+    input: Record<string, unknown>
+  ): Promise<string> {
+    try {
+      const nome = String(input.nome ?? "");
+      const telefone = String(input.telefone ?? "");
+      const interesse = String(input.interesse ?? "");
+
+      const lead = await this.store.saveLead({
+        chatId,
+        nome,
+        telefone,
+        interesse,
+      });
+
+      saveLeadToCsv({ chatId, nome, telefone, interesse });
+
+      if (
+        businessConfig.notificarDonoEm.includes("lead") &&
+        this.notifyOwner
+      ) {
+        await this.notifyOwner(
+          `🆕 *Novo lead — ${businessConfig.nomeNegocio}*\n` +
+            `Nome: ${nome}\n` +
+            `Tel: ${telefone}\n` +
+            `Interesse: ${interesse}`
+        );
+      }
+
+      console.log(`[CRM] Lead salvo: ${nome} (${telefone})`);
+      return JSON.stringify({ status: "lead_registrado", id: lead.id });
+    } catch (err) {
+      return JSON.stringify({ status: "erro", message: String(err) });
+    }
+  }
+
+  private async handleAgendarConsulta(
+    chatId: string,
+    input: Record<string, unknown>
+  ): Promise<string> {
+    try {
+      const nome = String(input.nome ?? "");
+      const telefone = String(input.telefone ?? "");
+      const servico = String(input.servico ?? "");
+      const dataHora = String(input.dataHora ?? "");
+      const observacao = input.observacao
+        ? String(input.observacao)
+        : undefined;
+
+      // Também grava como lead no store (histórico único)
+      const lead = await this.store.saveLead({
+        chatId,
+        nome,
+        telefone,
+        interesse: `Agendamento: ${servico} @ ${dataHora}`,
+      });
+
+      saveAgendamentoToCsv({
+        chatId,
+        nome,
+        telefone,
+        servico,
+        dataHora,
+        observacao,
+      });
+
+      if (
+        businessConfig.notificarDonoEm.includes("agendamento") &&
+        this.notifyOwner
+      ) {
+        await this.notifyOwner(
+          `📅 *Novo agendamento — ${businessConfig.nomeNegocio}*\n` +
+            `Nome: ${nome}\n` +
+            `Tel: ${telefone}\n` +
+            `Serviço: ${servico}\n` +
+            `Quando: ${dataHora}` +
+            (observacao ? `\nObs: ${observacao}` : "")
+        );
+      }
+
+      console.log(`[CRM] Agendamento: ${nome} — ${servico} @ ${dataHora}`);
+      return JSON.stringify({
+        status: "agendamento_registrado",
+        id: lead.id,
+        dataHora,
+      });
+    } catch (err) {
+      return JSON.stringify({ status: "erro", message: String(err) });
+    }
   }
 }

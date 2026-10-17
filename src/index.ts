@@ -1,5 +1,5 @@
 /**
- * Bootstrap: carrega env → cria store + provider → wiring do router → sobe HTTP + provider.
+ * Bootstrap: env → store + provider → router (com notifyOwner) → HTTP + Baileys.
  */
 
 import "dotenv/config";
@@ -7,43 +7,56 @@ import { createProvider } from "./providers/index.js";
 import { createStore } from "./store/index.js";
 import { Router } from "./core/router.js";
 import { createServer } from "./server.js";
+import { getOwnerPhone } from "./core/crm.js";
 
 async function main() {
   console.log("=== WhatsApp AI Boilerplate ===");
-  // Agora lemos variáveis específicas da Groq (ou genérico)
-  console.log(`AI_PROVIDER=${process.env.AI_PROVIDER || "groq"}`);
+  console.log(`AI_PROVIDER=groq`);
   console.log(`GROQ_MODEL=${process.env.GROQ_MODEL || "llama-3.1-8b-instant"}`);
   console.log(`PROVIDER=${process.env.PROVIDER || "baileys"}`);
   console.log(`STORE=${process.env.STORE || "sqlite"}`);
 
-  // A validação da chave fica a cargo do Engine, que lança exceção se necessário.
-  // Mas podemos dar uma dica amigável se nenhuma chave conhecida estiver presente.
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.GROQ_API_KEY) {
+  if (!process.env.GROQ_API_KEY) {
     console.error(
-      "\n❌ Nenhuma chave de IA encontrada.\n" +
-        "   Configure GROQ_API_KEY (gratuito) ou ANTHROPIC_API_KEY no .env\n"
+      "\n❌ GROQ_API_KEY não encontrada.\n" +
+        "   Configure no .env antes de iniciar.\n"
     );
     process.exit(1);
   }
 
   const store = createStore();
   const provider = createProvider();
-  const router = new Router(provider, store);
 
-  // Wiring: provider → router
+  const ownerPhone = getOwnerPhone();
+  if (ownerPhone) {
+    console.log(`OWNER_PHONE=${ownerPhone.slice(0, 4)}**** (notificações ativas)`);
+  } else {
+    console.log("OWNER_PHONE não configurado — notificações ao dono desligadas");
+  }
+
+  const notifyOwner = async (text: string) => {
+    const phone = getOwnerPhone();
+    if (!phone) return;
+    try {
+      await provider.send(phone, text);
+      console.log(`[notify] dono ${phone}: ${text.slice(0, 60)}...`);
+    } catch (err) {
+      console.error("[notify] falha ao avisar dono:", err);
+    }
+  };
+
+  const router = new Router(provider, store, { notifyOwner });
+
   provider.onMessage((payload) => router.handle(payload));
 
-  // HTTP (health + Meta webhook)
   const port = Number(process.env.PORT || 3000);
   const app = createServer(provider);
   app.listen(port, () => {
     console.log(`HTTP :${port}  (GET /health, GET|POST /webhook)`);
   });
 
-  // Inicia provider (Baileys conecta / Meta só loga)
   await provider.start();
 
-  // Graceful shutdown
   const shutdown = async () => {
     console.log("\nEncerrando...");
     await provider.stop();
@@ -56,4 +69,4 @@ async function main() {
 main().catch((err) => {
   console.error("Falha fatal:", err);
   process.exit(1);
-});""
+});
